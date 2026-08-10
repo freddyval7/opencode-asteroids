@@ -279,12 +279,15 @@ class ShootingStar {
 const POWERUP_TTL  = 10;     // tiempo de vida del ítem en pantalla
 const POWERUP_AURA = 2;      // últimos segundos con parpadeo
 const BOOST_TIME   = 5;      // duración del efecto al recogerlo
+const TRIPLE_TIME  = 5;      // duración del triple disparo al recogerlo
+const TRIPLE_OFFSET = 6;     // separación perpendicular de las balas laterales
 const DROP_CHANCE  = 0.15;   // probabilidad mediana de drop por asteroide destruido
 
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type = 'speed') {
     this.x    = x;
     this.y    = y;
+    this.type = type;            // 'speed' | 'triple'
     this.radius = 12;
     this.dead = false;
     this.ttl  = POWERUP_TTL;
@@ -308,35 +311,48 @@ class PowerUp {
   draw() {
     // Parpadea en los últimos segundos
     if (this.ttl < POWERUP_AURA && Math.floor(this.ttl * 8) % 2 === 0) return;
+    const isTriple = this.type === 'triple';
+    const color    = isTriple ? '#f0f' : '#0ff';
+    const auraCol  = isTriple ? 'rgba(255, 0, 255, 0.18)' : 'rgba(0, 255, 255, 0.18)';
     ctx.save();
     ctx.translate(this.x, this.y);
 
     // Aura de fondo
-    ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
+    ctx.fillStyle = auraCol;
     ctx.beginPath();
     ctx.arc(0, 0, this.radius + 6, 0, Math.PI * 2);
     ctx.fill();
 
     // Cuerpo
     ctx.rotate(this.rot);
-    ctx.strokeStyle = '#0ff';
+    ctx.strokeStyle = color;
     ctx.lineWidth   = 1.8;
     ctx.lineJoin    = 'round';
     ctx.beginPath();
     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Rayo estilizado (V de velocidad)
-    ctx.beginPath();
-    ctx.moveTo(-4, -7);
-    ctx.lineTo( 2,  0);
-    ctx.lineTo(-4,  0);
-    ctx.lineTo( 4,  7);
-    ctx.lineTo(-2,  0);
-    ctx.lineTo( 4,  0);
-    ctx.closePath();
-    ctx.fillStyle = '#0ff';
-    ctx.fill();
+    if (isTriple) {
+      // Icono pirámide: 1 punto arriba, 2 abajo (triple disparo)
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc( 0, -5, 2.2, 0, Math.PI * 2);
+      ctx.arc(-5,  4, 2.2, 0, Math.PI * 2);
+      ctx.arc( 5,  4, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Rayo estilizado (V de velocidad)
+      ctx.beginPath();
+      ctx.moveTo(-4, -7);
+      ctx.lineTo( 2,  0);
+      ctx.lineTo(-4,  0);
+      ctx.lineTo( 4,  7);
+      ctx.lineTo(-2,  0);
+      ctx.lineTo( 4,  0);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
 
     ctx.restore();
   }
@@ -358,6 +374,7 @@ class Ship {
     this.shootCooldown = 0;
     this.dead          = false;
     this.speedTimer    = 0;   // tiempo restante del power-up de velocidad
+    this.tripleTimer   = 0;   // tiempo restante del triple disparo
   }
 
   update(dt) {
@@ -365,6 +382,7 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.speedTimer    > 0) this.speedTimer    -= dt;
+    if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
 
     // Multiplicador de velocidad activo mientras dure el power-up
     const boost = this.speedTimer > 0 ? 2 : 1;
@@ -394,6 +412,21 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
+
+    // Triple disparo: pirámide (1 nariz + 2 detrás, offset perpendicular)
+    if (this.tripleTimer > 0) {
+      const BACK  = NOSE - 8;
+      const perpX = -Math.sin(this.angle);
+      const perpY =  Math.cos(this.angle);
+      const bx = this.x + Math.cos(this.angle) * BACK;
+      const by = this.y + Math.sin(this.angle) * BACK;
+      return [
+        new Bullet(ox, oy, this.angle),
+        new Bullet(bx + perpX * TRIPLE_OFFSET, by + perpY * TRIPLE_OFFSET, this.angle),
+        new Bullet(bx - perpX * TRIPLE_OFFSET, by - perpY * TRIPLE_OFFSET, this.angle),
+      ];
+    }
+
     return [new Bullet(ox, oy, this.angle)];
   }
 
@@ -405,6 +438,14 @@ class Ship {
     // Aureola del power-up de velocidad
     if (this.speedTimer > 0) {
       ctx.fillStyle = 'rgba(0, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius + 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Aureola del triple disparo
+    if (this.tripleTimer > 0) {
+      ctx.fillStyle = 'rgba(255, 0, 255, 0.22)';
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.radius + 8, 0, Math.PI * 2);
       ctx.fill();
@@ -601,8 +642,10 @@ function update(dt) {
         score += POINTS[a.size];
         explode(a.x, a.y, a.size * 5);
         // Drop de power-up con probabilidad mediana
-        if (Math.random() < DROP_CHANCE)
-          powerUps.push(new PowerUp(a.x, a.y));
+        if (Math.random() < DROP_CHANCE) {
+          const type = Math.random() < 0.5 ? 'speed' : 'triple';
+          powerUps.push(new PowerUp(a.x, a.y, type));
+        }
         newAsteroids.push(...a.split());
       }
     }
@@ -629,7 +672,9 @@ function update(dt) {
     for (const p of powerUps) {
       if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
         p.dead = true;
-        ship.speedTimer = BOOST_TIME;   // refresca/reinicia el timer
+        // Aplica el efecto según el tipo de power-up
+        if (p.type === 'triple') ship.tripleTimer = TRIPLE_TIME;
+        else                      ship.speedTimer = BOOST_TIME;
         explode(p.x, p.y, 8);
       }
     }
@@ -696,21 +741,23 @@ function drawHUD() {
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
-  // Barra de timer del power-up de velocidad
-  if (ship.speedTimer > 0) {
-    const BAR_W = 200, BAR_H = 8;
+  // Barra(s) de timer de power-ups
+  const bars = [];
+  if (ship.speedTimer  > 0) bars.push({ label: `VELOCIDAD x2  ${ship.speedTimer.toFixed(1)}s`,  frac: ship.speedTimer  / BOOST_TIME,  color: '#0ff' });
+  if (ship.tripleTimer > 0) bars.push({ label: `TRIPLE x3  ${ship.tripleTimer.toFixed(1)}s`,    frac: ship.tripleTimer / TRIPLE_TIME, color: '#f0f' });
+  const BAR_W = 200, BAR_H = 8;
+  bars.forEach((b, i) => {
     const bx = (W - BAR_W) / 2;
-    const by = H - 28;
-    const frac = ship.speedTimer / BOOST_TIME;
+    const by = H - 20 - i * 26;
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.fillRect(bx, by, BAR_W, BAR_H);
-    ctx.fillStyle = '#0ff';
-    ctx.fillRect(bx, by, BAR_W * frac, BAR_H);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(bx, by, BAR_W * b.frac, BAR_H);
     ctx.textAlign = 'center';
     ctx.font = '12px monospace';
-    ctx.fillStyle = '#0ff';
-    ctx.fillText(`VELOCIDAD x2  ${ship.speedTimer.toFixed(1)}s`, W / 2, by - 6);
-  }
+    ctx.fillStyle = b.color;
+    ctx.fillText(b.label, W / 2, by - 6);
+  });
 }
 
 function drawOverlay(title, sub) {
